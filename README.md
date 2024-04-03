@@ -24,8 +24,7 @@ CVPR 2024
 Tao Hu, Hongyi Xu, Linjie Luo, Tao Yu, Zerong Zheng, He Zhang, Yebin Liu, Matthias Zwicker
 
 TVCG 2023
-[[Video]](https://youtu.be/RdKLfRYtg3I) [[Paper]](https://ieeexplore.ieee.org/document/10190111) 
-
+[[Project Page]](https://TaoHuUMD.github.io/projects/hvtrpp/) [[Video]](https://youtu.be/RdKLfRYtg3I) [[Paper]](https://ieeexplore.ieee.org/document/10190111) 
 
 **HVTR: Hybrid Volumetric-Textural Rendering for Human Avatars**  
 Tao Hu, Tao Yu, Zerong Zheng, He Zhang, Yebin Liu, Matthias Zwicker
