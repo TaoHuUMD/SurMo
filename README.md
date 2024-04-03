@@ -17,7 +17,7 @@ This repository contains the code/key components for the following papers:
 Tao Hu, Fangzhou Hong, Ziwei Liu
 
 CVPR 2024
-[[Project Page]](https://taohuumd.github.io/projects/SurMo) [[Video]](https://www.youtube.com/watch?v=m_rP5HwL53I) [[Paper]](arxiv.pdf) 
+[[Project Page]](https://taohuumd.github.io/projects/SurMo) [[Video]](https://www.youtube.com/watch?v=m_rP5HwL53I) [[Paper]](https://arxiv.org/pdf/2404.01225.pdf) 
 
 
 **HVTR++: Image and Pose Driven Human Avatars using Hybrid Volumetric-Textural Rendering**  
@@ -48,3 +48,29 @@ To facilitate comparisons with our model in subsequent work, we have saved our r
 
 ## Code
 Will be released soon.
+
+## Citation
+```bibtex
+  @misc{hu2024surmo,
+      title={SurMo: Surface-based 4D Motion Modeling for Dynamic Human Rendering}, 
+      author={Tao Hu and Fangzhou Hong and Ziwei Liu},
+      year={2024},
+      eprint={2404.01225},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+  }
+
+  @ARTICLE{hu2023hvtrpp,
+      author={Hu, Tao and Xu, Hongyi and Luo, Linjie and Yu, Tao and Zheng, Zerong and Zhang, He and Liu, Yebin and Zwicker, Matthias},
+      journal={IEEE Transactions on Visualization and Computer Graphics}, 
+      title={HVTR++: Image and Pose Driven Human Avatars using Hybrid Volumetric-Textural Rendering}, 
+      year={2023}
+  }
+
+  @inproceedings{hu2022hvtr,
+      title={HVTR: Hybrid Volumetric-Textural Rendering for Human Avatars},
+      author={Hu, Tao and Yu, Tao and Zheng, Zerong and Zhang, He and Liu, Yebin and Zwicker, Matthias},
+      booktitle = {2022 International Conference on 3D Vision (3DV)},
+      year = {2022}
+}
+```
