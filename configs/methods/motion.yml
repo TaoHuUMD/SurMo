@@ -1,0 +1,10 @@
+use_nerf :  True
+use_gen  : True
+use_face :  True
+#use_face :  False
+
+model : P_Motion
+is_expand_nerf_channel : True
+is_insert_nerf_depth : True
+is_skip_nerf : True
+uv_reso: 256

@@ -1,0 +1,30 @@
+img_H: 1024
+img_W: 1024
+
+iters_each_sample : 300
+demo_frame : "1"
+
+dataset:
+  gender: "neutral" 
+  dirname: "CoreView_394"
+  resname: "motion_394"
+  id : 0
+  valid_begin: 0
+  valid_end : 858
+  train_begin : [1]
+  train_end : [600]
+  test_begin: [1]
+  test_end : [600]
+  train_view : "0 6 12 18" 
+  test_view : "1 2 3 4 5 7 8 9 10 11 13 14 15 16 17 19 20" 
+  dataset_step: 1
+
+  novel_pose_begin: [600]
+  novel_pose_end: [900]
+
+  demo_view: "1 7 13 19"
+  demo_begin: [1]
+  demo_end : [600]
+
+  novel_demo_begin: [600]
+  novel_demo_end : [900]

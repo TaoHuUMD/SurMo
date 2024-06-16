@@ -1,0 +1,22 @@
+
+train_rgbd: False
+
+gender: "neutral" 
+org_img_reso: 1024
+dataset :  "zju"
+dataset_basedir: "zju_mocap"
+
+white_bg: False
+display_winsize: 3000
+
+fps: 30
+
+# image_dir : 'image'
+# mask_dir : 'refined_mask'
+# sub_flag : "Camera_B"
+# depth_dir : 'depth'
+# annots: "annots.npy"
+
+
+img_H: 1024
+img_W: 1024
