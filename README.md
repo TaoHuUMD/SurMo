@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 ### Download Models & Assets & Datasets
 
-Download the [pre-trained models](https://1drv.ms/f/s!Att91f8pjJXNnBnujIUpx1l4uzss?e=MglSEI) and [assets](https://1drv.ms/f/s!Att91f8pjJXNnBBDe3pVC-vTbG_a?e=XvOQZn). Put them in *DATA_DIR/result/trained_model* and *DATA_DIR/asset* respectively, or download models via scripts *python download_models.py*. *DATA_DIR* is specified as *../data* in default.
+Download the [pre-trained models](https://1drv.ms/f/s!Att91f8pjJXNnBnujIUpx1l4uzss?e=9beDrT) and [assets](https://1drv.ms/f/s!Att91f8pjJXNnBBDe3pVC-vTbG_a?e=WDcxSS). Put them in *DATA_DIR/result/trained_model* and *DATA_DIR/asset* respectively, or download models via scripts *python download_models.py*. *DATA_DIR* is specified as *../data* in default.
 
 Download [ZJU-MoCap](https://github.com/zju3dv/neuralbody/blob/master/INSTALL.md#zju-mocap-dataset) dataset and put it in the folder *zju_mocap* (e.g., *DATA_DIR/zju_mocap/CoreView_3XX*)
  
