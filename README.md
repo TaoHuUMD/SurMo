@@ -26,10 +26,7 @@ Tao Hu, Tao Yu, Zerong Zheng, He Zhang, Yebin Liu, Matthias Zwicker
 # Instructions
 
 ## Test Results
-To facilitate comparisons with our model in subsequent work, we have saved our rendering results on ZJU-MoCap.
-[[SurMo]](https://1drv.ms/u/s!Att91f8pjJXNmn9AY9Rn0KfHK0ul?e=cbyuje)
-[[HVTR++]](https://1drv.ms/u/s!Att91f8pjJXNmwHrfGI78e_wLVfi?e=FAiPBs)
-[[HVTR]](https://1drv.ms/u/s!Att91f8pjJXNmwAiPXoE_iYjmq1L?e=W4hDkT)
+To facilitate comparisons with our model in subsequent work, we have saved our rendering results on ZJU-MoCap [OneDrive](https://1drv.ms/f/c/cd958c29ffd57ddb/Ett91f8pjJUggM1-DQAAAAAB892JXlTtzxmciQIh0MC3bg?e=r1HjCH)
 
 
 ## Installation
