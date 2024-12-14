@@ -6,16 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-import numpy as np
 
-from uvm_lib.engine.thutil.networks import embedder
+from Engine.th_utils.networks import embedder
 
 #generator, discriminator.
-from uvm_lib.engine.thutil.my_pytorch3d.smpl_util import SMPL_Util
+from Engine.th_utils.my_pytorch3d.smpl_util import SMPL_Util
 
-from uvm_lib.engine.thutil.animation.uv_generator import Index_UV_Generator
-
-from uvm_lib.engine.thutil.networks.embedder import pose_embedder,pose_dim
+from Engine.th_utils.animation.uv_generator import Index_UV_Generator
 
 is_debug = False
 
@@ -63,7 +60,7 @@ class HumanUVNerfMotion(nn.Module):
         self.vts_uv = self.render_posmap.get_vts_uv().cuda().permute(0,2,1)
         self.vts_uv.requires_grad = False
                 
-        self.smpl_util = SMPL_Util(gpu_ids = self.gpu_ids, gender = self.opt.gender, faces_uvs=self.render_posmap.faces_uvs, verts_uvs = self.render_posmap.verts_uvs, smpl_uv_vts = self.vts_uv)
+        self.smpl_util = SMPL_Util(gender = self.opt.gender, faces_uvs=self.render_posmap.faces_uvs, verts_uvs = self.render_posmap.verts_uvs, smpl_uv_vts = self.vts_uv)
                         
         self.uvdim = self.opt.posenet_setup.tex_latent_dim
         self.uv_reso = self.opt.posenet_setup.uv_reso

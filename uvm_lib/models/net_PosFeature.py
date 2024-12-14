@@ -1,21 +1,18 @@
 from pickle import TRUE
-from torch._C import device
-from torch.autograd import grad
 import torch.nn as nn
-#from ..depend import spconv
 import torch.nn.functional as F
 import torch
 
 import numpy as np
 
-from uvm_lib.engine.thutil.io.prints import *
+from Engine.th_utils.io.prints import *
 
 is_debug_visualization=False
 
 #generator, discriminator.
-from uvm_lib.engine.thutil.my_pytorch3d.smpl_util import SMPL_Util
-from uvm_lib.engine.thutil.animation.uv_generator import Index_UV_Generator
-from uvm_lib.engine.thutil.networks import networks
+from Engine.th_utils.my_pytorch3d.smpl_util import SMPL_Util
+from Engine.th_utils.animation.uv_generator import Index_UV_Generator
+from Engine.th_utils.networks import networks
 
 import cv2
 
@@ -28,12 +25,12 @@ class PosFeatureNet(nn.Module):
 
         self.uv_reso = opt.posenet_setup.uv_reso
         
-        self.render_posmap = Index_UV_Generator(self.uv_reso, self.uv_reso, uv_type=opt.uv_type, data_dir="../asset/data/uv_sampler")
+        self.render_posmap = Index_UV_Generator(self.uv_reso, self.uv_reso, uv_type=opt.uv_type, data_dir="./data/asset/data/uv_sampler")
         
         self.vts_uv = self.render_posmap.get_vts_uv().cuda().permute(0,2,1)
         self.vts_uv.requires_grad = False
                 
-        self.smpl_util = SMPL_Util(gpu_ids = [0], gender = opt.gender, faces_uvs=self.render_posmap.faces_uvs, verts_uvs = self.render_posmap.verts_uvs, smpl_uv_vts = self.vts_uv)
+        self.smpl_util = SMPL_Util(gender = opt.gender, faces_uvs=self.render_posmap.faces_uvs, verts_uvs = self.render_posmap.verts_uvs, smpl_uv_vts = self.vts_uv)
         
         self.use_posmap = self.opt.use_posmap
 
@@ -102,7 +99,6 @@ class PosFeatureNet(nn.Module):
                 input_dim += self.uvdim
                     
             self.conv_offset_net = networks.define_G(input_dim, 3, 64, opt.netG, 1, 2, opt.n_local_enhancers, opt.n_blocks_local, opt.norm, gpu_ids=self.gpu_ids)            
-            #self.conv_offset_net = networks.define_G(netPos_output_nc + 3, 3, 64, opt.netG, 1, 2, opt.n_local_enhancers, opt.n_blocks_local, opt.norm, gpu_ids=self.gpu_ids)
     
     def update_weight_loss(self):
         self.weights = {
@@ -129,8 +125,7 @@ class PosFeatureNet(nn.Module):
 
         self.losses = {
             'posmap_feat': 0,
-            
-
+        
             'rot_normal': 0,
             'rot_offset': 0,
 
@@ -155,10 +150,6 @@ class PosFeatureNet(nn.Module):
 
     def extrat_dynamics_from_motion_seq(self, motion_seq_):        
         b, n, c = motion_seq_.shape
-
-        def invalid_motion(a):
-            #if torch.sum(torch.abs(pos_map_data["gt_next_pose"][0][0])) <1e-5:
-            return a.any()
 
         motion_seq = motion_seq_.split(3, 2)
 
@@ -211,8 +202,8 @@ class PosFeatureNet(nn.Module):
 
         pred_normal_uv_map = self.conv_norm_net(posnet_output, vts_uv)
         
-        pred_normal_uv_vts = self.render_posmap.index_posmap_by_vts(pred_normal_uv_map, vts_uv)
-        gt_normal_vts = smpl_vertices[...,-3:] #normal in 3d
+        pred_normal_uv_vts = self.render_posmap.index_posmap_by_vts(pred_normal_uv_map, vts_uv)        
+        gt_normal_vts = self.smpl_util.get_normal(smpl_vertices[...,:3])
 
         return pred_normal_uv_map, self.criterionL2(gt_normal_vts.permute(0,2,1), pred_normal_uv_vts) #
 
@@ -241,14 +232,10 @@ class PosFeatureNet(nn.Module):
         if self.pred_velocity_uv:
             velo_loss = self.criterionL2(pos_map_data["gt_next_velocity"], pred_next_step_uv[:,3:6,...])
 
-        #if torch.sum(torch.abs(pos_map_data["gt_next_pose"][0][0])) <1e-5:
         if not pos_map_data["gt_next_pose"][0][0].any():
             pose_loss *= 0
             velo_loss *= 0
             
-        #self.losses['pred_pose_uv']
-        #self.losses['pred_velocity_uv']
-
         if True: #modify visualization
             next_pose_uv = pred_next_step_uv[:,:3,...]
 
@@ -367,8 +354,6 @@ class PosFeatureNet(nn.Module):
         if self.opt.motion_mode:
 
             visout_list = ["ab_c_v10", "c_velo", "c_acce", "c_traj", "pred_pose_uv", "ab_c_norm", "pred_normal_uv"]
-
-            #next_pose_uv - pos_map_data["cur_pose"]
 
             for item in visout_list:
                 if getattr(self.opt.posenet_setup, item):

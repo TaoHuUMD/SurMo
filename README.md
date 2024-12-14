@@ -26,7 +26,7 @@ Tao Hu, Tao Yu, Zerong Zheng, He Zhang, Yebin Liu, Matthias Zwicker
 # Instructions
 
 ## Test Results
-To facilitate comparisons with our model in subsequent work, we have saved our rendering results on ZJU-MoCap [OneDrive](https://1drv.ms/f/c/cd958c29ffd57ddb/Ett91f8pjJUggM1-DQAAAAAB892JXlTtzxmciQIh0MC3bg?e=r1HjCH)
+To facilitate comparisons with our model in subsequent work, we have saved our rendering results of ZJU-MoCap on [OneDrive](https://1drv.ms/f/c/cd958c29ffd57ddb/Ett91f8pjJUggM1-DQAAAAAB892JXlTtzxmciQIh0MC3bg?e=r1HjCH)
 
 
 ## Installation
@@ -40,12 +40,11 @@ conda install pytorch3d -c pytorch3d
 pip install -r requirements.txt
 ```
 
-## Inference
-
+## Test
 
 ### Download Models & Assets & Datasets
 
-Download the [pre-trained models](https://1drv.ms/f/s!Att91f8pjJXNnBnujIUpx1l4uzss?e=9beDrT) and [assets](https://1drv.ms/f/s!Att91f8pjJXNnBBDe3pVC-vTbG_a?e=WDcxSS). Put them in *DATA_DIR/result/trained_model* and *DATA_DIR/asset* respectively, or download models via scripts *python download_models.py*. *DATA_DIR* is specified as *../data* in default.
+Download the pretrained models and necessary assets from [OneDrive](https://1drv.ms/f/c/cd958c29ffd57ddb/EsqvoFUGhCpIpuT10AaBDkMBb_ACQRf-dgjiC1FviCCFsA?e=IK007Z). Put them in *DATA_DIR/result/trained_model* and *DATA_DIR/asset* respectively. *DATA_DIR* is specified as *./data* in default.
 
 Download [ZJU-MoCap](https://github.com/zju3dv/neuralbody/blob/master/INSTALL.md#zju-mocap-dataset) dataset and put it in the folder *zju_mocap* (e.g., *DATA_DIR/zju_mocap/CoreView_3XX*)
  
@@ -55,33 +54,42 @@ The folder structure should look like
 
 ```
 DATA_DIR
-├── zju_mocap
 └── asset/
     ├── smpl_data/
         └── SMPL_NEUTRAL.pkl
-├── result/trained_model
+    ├── uv_sampler/
+    ├── uv_table.npy
+    ├── smpl_uv.obj
+    ├── sample_data.pkl
+├── dataset
+    ├──zju_mocap/
+├── result/
+    ├── trained_model/modelname/
+        └──xx.pth
+    ├── test_output
+
 ```
 
 ### Commands
 
-Inference script for models (313, 315, 377, 386, 387, 394) trained on ZJU-MoCap.
+The test script for models (313, 315, 377, 386, 387, 394) trained on ZJU-MoCap.
 ```bash
-bash scripts/3XX_inference.sh gpu_ids
+bash scripts/zju/3XX_test.sh [gpu_ids]
 ```
-e.g., bash scripts/313_inference.sh 0
+i.e., bash scripts/zju/313_test.sh or bash scripts/zju/313_test.sh 0
 
-The inference results will be found in *DATA_DIR/result/*.
+The test results will be found in *DATA_DIR/result/*. An example rendering result is shown in *docs/figs/test_example.jpg*, which includes a generated image, ground truth image, positional map, predicted normal map, and low resolution NeRF renderings.
 
 ## Training
 
 ### Commands
-Training script for subjects (313, 315, 377, 386, 387, 394) on ZJU-MoCap.
+The training script for subjects (313, 315, 377, 386, 387, 394) on ZJU-MoCap.
 ```bash
-bash scripts/3XX_train.sh gpu_ids
+bash scripts/zju/3XX_train.sh [gpuids]
 ```
-e.g., bash scripts/313_train.sh 0,1,2,3
+i.e., bash scripts/zju/313_train.sh or bash scripts/zju/313_train.sh 0,1,2,3
 
-The trained models will be found in *DATA_DIR/result/trained_model/*.
+The trained models will be saved in *DATA_DIR/result/trained_model/*.
 ## License
 
 Distributed under the S-Lab License. See `LICENSE` for more information.

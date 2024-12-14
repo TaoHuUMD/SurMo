@@ -1,46 +1,37 @@
 import argparse
-from matplotlib.pyplot import axes
 import numpy as np
 import torch
 import os
-#from torch._C import TreeView
-from torch.autograd import Variable
 
+from .base_model import BaseModel
 
-from uvm_lib.engine.lib.models.base_model import BaseModel
-
-from uvm_lib.engine.thutil import util
-
-
-
-from torchsummary import summary
-
-
-import random
+from Engine.th_utils import util
 
 import sys
 sys.path.append("..")
-from uvm_lib.engine.thutil.networks import networks
-from uvm_lib.engine.thutil.networks import losses
+from Engine.th_utils.networks import networks
+from Engine.th_utils.networks import losses
 
-from uvm_lib.engine.thutil.files import get_croped_size
-from uvm_lib.engine.thutil.util import split_dict_batch
+from Engine.th_utils.files import get_croped_size
+from Engine.th_utils.util import split_dict_batch
 
-from uvm_lib.engine.thutil.networks.util.image_pool import ImagePool
+from Engine.th_utils.networks.util.image_pool import ImagePool
 
-from uvm_lib.engine.thutil.networks import embedder
-from uvm_lib.engine.thutil.io.prints import *
+from Engine.th_utils.io.prints import *
 
 import torch.nn as nn
 
-from uvm_lib.engine.thutil.io.prints import *
+from Engine.th_utils.io.prints import *
 
-from uvm_lib.engine.thutil.networks.net_utils import load_model, save_model
+from Engine.th_utils.animation.util import map_normalized_dp_to_tex_pytorch
 
-from uvm_lib.engine.thutil.animation.uv_generator import Index_UV_Generator
+from Engine.th_utils.networks.net_utils import load_model, save_model
+
+from Engine.th_utils.animation.uv_generator import Index_UV_Generator
 
 import cv2
-from uvm_lib.engine.thutil.num import mask_4d_img
+
+from Engine.th_utils.num import mask_4d_img
 
 import torchvision.transforms 
 import torchvision.transforms as T
@@ -91,10 +82,11 @@ class Model(BaseModel):
         self.uv_type = self.opt.posenet_setup.uv_type
 
         self.posFeatNet = PosFeatureNet(self.opt)
-        self.render_posmap = Index_UV_Generator(self.uv_reso, self.uv_reso, uv_type=self.uv_type, data_dir="../asset/data/uv_sampler")
+
+        self.render_posmap = Index_UV_Generator(self.uv_reso, self.uv_reso, uv_type=self.uv_type, data_dir="./data/asset/data/uv_sampler")
         self.vts_uv = self.render_posmap.get_vts_uv().cuda().permute(0,2,1)
         self.vts_uv.requires_grad = False
-    
+                        
         if self.opt.use_nerf:
             self.nerfRender = NerfRender(self.opt, None, opt.phase, netNerf = netNeRF(self.opt))
             self.nerfRender.apply(networks.weights_init)
@@ -102,7 +94,6 @@ class Model(BaseModel):
 
         self.uv_lat, self.pose_lat, self.pose_lat_2d, self.uv_lat_2d, self.posed_uv_lat = None, None, None, None, None
         
-
         self.build_nr_net()
            
         if self.isTrain:
@@ -117,7 +108,6 @@ class Model(BaseModel):
 
         self.loss_names = []
         self.loss_names += ['G_GAN', 'D_real', 'D_fake', 'Face']
-
 
         if opt.use_posmap:
             self.posmap_loss_out = []
@@ -136,7 +126,7 @@ class Model(BaseModel):
                     self.posmap_loss_out += [item]
 
             self.loss_names += self.posmap_loss_out
-            self.visual_names += self.posmap_vis
+            self.visual_names += ["cur_pose", "pred_normal_uv"]
 
         self.loss_names += ['G_GAN', 'D_real', 'D_fake', 'Face', 'nerf_rec', 'G_L1', 'G_VGG', 'G_GAN_Feat']
 
@@ -208,10 +198,8 @@ class Model(BaseModel):
         #input dim for supp. network
         input_dim = self.opt.motion.nerf_dim
         
-        input_dim += self.opt.posenet_setup.tex_latent_dim
-        
+        input_dim += self.opt.posenet_setup.tex_latent_dim        
         tex_lat_dim = self.opt.posenet_setup.tex_latent_dim
-
 
         #resize style latent
         if self.opt.is_pad_img: 
@@ -219,16 +207,13 @@ class Model(BaseModel):
         else:
             self.netResize2DStyle = networks.define_ResizeNet(tex_lat_dim, tex_lat_dim, org_size = (self.img_gen_h, self.img_gen_w),  tgt_size = (self.img_nerf_h, self.img_nerf_w))
 
-
-            
         self.model_names.append('netResize2DStyle')
         params += list(self.netResize2DStyle.parameters())
 
         if self.opt.learn_uv:
             input_dim += 2
 
-        if self.opt.nr_insert_smpl_uv:
-            input_dim += 2
+        if self.opt.nr_insert_smpl_uv: input_dim += 2
 
         input_dim += 1 #nerf depth included
 
@@ -247,13 +232,10 @@ class Model(BaseModel):
         self.G_model_names.append('netSup')
         params += list(self.netSup.parameters())
 
-
         D_params = []
-        th, tw = self.img_gen_h, self.img_gen_w
         
         indim = 3
-        if self.opt.motion.ab_Ddual:
-            indim += 3 
+        if self.opt.motion.ab_Ddual: indim += 3 
         if self.opt.motion.ab_D_pose: indim += 2
 
         if self.opt.motion.use_org_discrim:
@@ -284,13 +266,11 @@ class Model(BaseModel):
         # optimizer D
         if len(D_params):
             self.optimizer_D = torch.optim.Adam(D_params, lr = self.old_lr_D, betas=(opt.beta1, 0.999))
-    
-    
+
         if self.opt.verbose:
             print('---------- Networks initialized -------------')
     
     def requires_grad_D(self, flag):
-
         for netname in self.D_model_names:        
             networks.requires_grad(getattr(self, netname), flag)
             
@@ -333,8 +313,6 @@ class Model(BaseModel):
         self.fake_pool = ImagePool(self.opt.pool_size)
 
         self.criterionGAN = networks.GANLoss(use_lsgan = not self.opt.no_lsgan, tensor=self.Tensor)            
-        self.criterionFace = losses.FaceLoss(pretrained_path=self.opt.face_model)
-        self.criterionFace.to(self.opt.gpu_ids[0])
         self.criterionContrastive = losses.ContrastiveLoss()
 
         self.loss_filter = self.init_loss_filter(not self.opt.no_ganFeat_loss, not self.opt.no_vgg_loss)
@@ -355,9 +333,7 @@ class Model(BaseModel):
     def input_tocuda(self, batch):
         for k in batch:
             if not isinstance(batch[k][0], str) and (not isinstance(batch[k], np.int)):
-                #if not torch.is_tensor(batch[k]):
                 batch[k] = batch[k].cuda()
-        #batch['state'] = 'evaluate'
     
     def pts_to_world(self, pts, batch):
 
@@ -378,59 +354,9 @@ class Model(BaseModel):
         world_pts += Th.squeeze(2)
 
         world_pts = world_pts.view(*sh)
-        return world_pts    
-    
-    def get_face_bbox(self):
-        return self.head_bbox
-        
-    def process_head_box(self, head_bbox, img_size, img_gt = None):        
-        x, y, w, h = 0, 0, 0, 0        
-        pad = 3
-        
-        if self.opt.use_face:        
-            arr = []            
-            for i in range(head_bbox.shape[0]):
-            
-                full_bbox = head_bbox[i]
-                h_x1, h_y1, h_x2, h_y2 = full_bbox[0], full_bbox[1], full_bbox[2], full_bbox[3]
-                
-                h_x1 -= x
-                h_x2 -= x
-                
-                h_y1 -= y
-                h_y2 -= y
-                
-                h_x1 -= pad
-                h_y1 -= pad
-                        
-                h_x2 += pad
-                h_y2 += pad
-                            
-                if h_x1<0: h_x1 = 0
-                if h_x2<0: h_x2 = 0
-                
-                if h_y1<0: h_y1 = 0
-                if h_y2<0: h_y2 = 0
-                                
-                if h_y2 >= img_size[0]:
-                    h_y2 = img_size[0] - 1
+        return world_pts
+  
 
-                if h_x2 >= img_size[1]:
-                    h_x2 = img_size[1] - 1
-
-                arr.append(np.array([h_x1, h_y1, h_x2, h_y2]))
-                
-                if img_gt is not None:
-                #if True:
-                    img = ( (img_gt[0] + 1) / 2 * 255).detach().cpu().numpy().astype(np.uint8).copy() 
-                    printb(img.shape, (h_x1, h_y1),(h_x2, h_y2))
-                    cv2.rectangle(img,(h_x1, h_y1),(h_x2, h_y2),(0,255,0),3)
-                    cv2.imshow("mask", img)
-                    cv2.waitKey(0)
-                    exit()
-            self.head_bbox = torch.from_numpy(np.array(arr)).long()
-
-        
     def update_weights(self, epoch):
         if self.opt.hypara.adjust_gamma:
             if self.opt.hypara.w_D_grad >= self.opt.hypara.gamma_lb and epoch % 100 == 0 and epoch != 0:
@@ -445,8 +371,16 @@ class Model(BaseModel):
             decay = self.opt.w_nerf_rec * 0.25 / (self.opt.niter + self.opt.niter_decay)
             self.nerf_weight = self.opt.w_nerf_rec * 0.25 - decay * (epoch - 60)
         
-        return 
-  
+        return       
+
+    def warp_img_to_uv(self, gen_img, posed_uv):
+        
+        gen_uv_img, gen_uv_mask = map_normalized_dp_to_tex_pytorch(gen_img[0].permute(1,2,0), posed_uv[0].permute(1,2,0), self.uv_reso, fillconst=0)
+        gen_uv_img = gen_uv_img.clone().permute(2,0,1)
+        gen_uv_img = T.functional.vflip(gen_uv_img)[None,...]
+        gen_uv_mask = T.functional.vflip(gen_uv_mask)[None,...]
+
+        return gen_uv_img, gen_uv_mask
     
     def pad_img_w(self, input, padding=0):
         #h>w        
@@ -459,7 +393,7 @@ class Model(BaseModel):
     
     def forward_G(self, batch, infer=False):
         
-        if not hasattr(self, "criterionFace"):
+        if not hasattr(self, "criterionContrastive"):
             self.define_loss()
 
         self.input_tocuda(batch)
@@ -484,7 +418,6 @@ class Model(BaseModel):
 
         pose_latent = None
 
-        #if self.opt.posenet_setup.c_velo:
         if self.opt.motion_mode:
             smpl_vertices = batch["feature"][...,:-3].clone()
         else:
@@ -493,22 +426,18 @@ class Model(BaseModel):
 
         assert smpl_vertices.ndimension() == 3
         
-        is_mask = False #self.use_posmap
+        is_mask = False 
         is_normal = False
         is_depth = False
         
-        posed_depth, posed_uv, posed_normal, posed_mask = None, batch["full_uv"], None, None
+        posed_uv = batch["posed_uv"]
 
-    
+        if is_depth:
+            full_depth = posed_depth.clone()
+            posed_depth = posed_depth[...,0].unsqueeze(-1).permute(0,3,1,2)
+
         posed_uv[:,[0,1],...] = posed_uv[:,[1,0],...]
-        
-        if self.opt.demo_all:
-            if posed_normal is not None:
-                self.nr_gt_spn = posed_normal.detach()
-            if posed_depth is not None:
-                self.nr_gt_spdepth = posed_depth.detach()
-        
-        is_aug_this_epoch = False
+                
         if (not infer) and self.opt.aug_nr and np.random.rand() > 0.6:
             if self.opt.small_rot: scale = 20
             else: scale = 180
@@ -522,18 +451,10 @@ class Model(BaseModel):
                 torchvision.transforms.RandomRotation(degrees=(r*scale, r*scale), fill = 1 if self.opt.white_bg else -1)
                 ]
             )
-            is_aug_this_epoch = True
         else: 
             transforms = T.Compose([])
             transforms_img = T.Compose([])
-     
-        input_G = None
         
-        uv_lat_list = []
-        
-        with torch.no_grad():
-            ws = torch.ones(batch_size, self.opt.motion.style_dim, device = device)
-
         uvlatent = self.uv_latent_code(torch.arange(0, self.uv_reso*self.uv_reso).to(device)).view(1, self.uv_reso, self.uv_reso, -1).permute(0,3,1,2)
         uvlatent = uvlatent.expand(batch_size, -1, -1, -1)
 
@@ -545,12 +466,8 @@ class Model(BaseModel):
         uvlatent = uvlatent * uvmask
 
         pose_latent = None
-        if self.opt.posenet_setup.combine_pose_style:
-            posnet_output, inter_posenet_result, posmap_loss = self.posFeatNet(smpl_vertices, poses, shapes, uvlatent, pose_latent, other_inputs = None)
-        else:#style
-            posnet_output, inter_posenet_result, posmap_loss = self.posFeatNet(smpl_vertices, poses, shapes, None, pose_latent, other_inputs = None)
-            posnet_output = torch.cat((posnet_output, uvlatent), 1)
-
+        posnet_output, inter_posenet_result, posmap_loss = self.posFeatNet(smpl_vertices, poses, shapes, None, pose_latent, other_inputs = {"full_uv_img": batch["full_uv_img"]} if self.opt.posenet_setup.pred_texture_uv else None)
+        posnet_output = torch.cat((posnet_output, uvlatent), 1)
 
         for key in self.posmap_vis:
             setattr(self, key, inter_posenet_result[key].detach())
@@ -585,15 +502,13 @@ class Model(BaseModel):
             real_image_t = self.pad_img_w(real_image_t, padding=1)
                 
         if self.opt.vrnr:
-            
-            #img completion. supervision.
+
             nerf_input_latent = posnet_output
                 
             if self.opt.vrnr_mesh_demo:                    
                 mesh_dict = self.nerfRender.render_nerf(batch, nerf_input_latent)
                 self.vrnr_mesh = mesh_dict['mesh']
                 return 
-                #{'cube': cube, 'mesh': mesh}
 
             if self.opt.use_sdf_render:
                 self.loss_names += ["g_eikonal", "g_minimal_surface"]
@@ -601,10 +516,10 @@ class Model(BaseModel):
             self.loss_g_eikonal = 0
             self.loss_g_minimal_surface = 0
 
-            #split_dict_batch
             nerf_img = []
             nerf_depth = []
             batch_id = 0
+
             for one_batch in split_dict_batch(batch, 1):
                 nerf_img_, nerf_depth_, sdf_, eikonal_term_ = self.nerfRender.render_nerf(one_batch, nerf_input_latent[[batch_id]])
                 batch_id += 1
@@ -635,24 +550,20 @@ class Model(BaseModel):
                         
             posed_uv_latent = None
 
-            #if self.opt.motion.ab_cond_uv_latent:
             posed_uv_latent = self.render_posmap.index_posmap_by_uvmap(uvlatent, posed_uv)
 
             smpl_mask = torch.unsqueeze(torch.any(posed_uv > 0, 1), 1)            
             posed_uv = mask_4d_img(posed_uv, smpl_mask)
-            if posed_normal is not None:                                
-                posed_normal = transforms(posed_normal)
-                posed_normal = mask_4d_img(posed_normal, smpl_mask)
-                
+
             if self.opt.is_crop: #aist crop
-                
                 b, c, h, w = real_image_t.shape    
                 
                 _, _, hn, wn = nerf_latent.shape
 
-                factor = self.img_gen_h // self.img_nerf_h                
+                factor = self.img_gen_h // self.img_nerf_h
+
                 nerf_latent = nerf_latent[:,:, int(self.opt.y0_crop // factor) : hn - (self.opt.y1_crop // factor), (self.opt.x0_crop // factor) : wn - (self.opt.x1_crop // factor)]
-                
+
             if self.opt.is_pad_img:
                 nerf_latent = self.pad_img_w(nerf_latent, padding=1)
  
@@ -661,17 +572,19 @@ class Model(BaseModel):
                 if self.opt.is_pad_img:
                     tgt_w = tgt_h
                 
-                if not self.opt.debug_only_nerf:
-                    if hasattr(self, "netResize2DStyle"):
-                        posed_uv_latent = self.netResize2DStyle(posed_uv_latent)
-                    else:
-                        posed_uv_latent = torch.nn.functional.interpolate(posed_uv_latent, size=(tgt_h, tgt_w), mode='bilinear', align_corners=False)#, antialias=True
-                
+                if hasattr(self, "netResize2DStyle"):
+                    posed_uv_latent = self.netResize2DStyle(posed_uv_latent)
+                else:
+                    posed_uv_latent = torch.nn.functional.interpolate(posed_uv_latent, size=(tgt_h, tgt_w), mode='bilinear', align_corners=False)#, antialias=True
+
                 self.visual_names += ["tex_feat"]
             
+            if self.opt.nr_insert_smpl_uv:
+                 uvlow = torch.nn.functional.interpolate(posed_uv, size=(self.img_nerf_h, self.img_nerf_w), mode='bilinear', align_corners=False)#, antialias=True
+                 nerf_latent = torch.cat((nerf_latent, uvlow), 1)
 
             nerf_latent = torch.cat((nerf_latent, posed_uv_latent), 1)
-            
+    
             if self.opt.superreso=="LightSup":
                 fake_image = self.netSup(nerf_latent)
 
@@ -703,8 +616,8 @@ class Model(BaseModel):
 
         #*********************
         #calculate loss
+        #masked generated image to calculate loss
         if self.opt.masked_loss:
-
             mask_full = real_mask.expand(-1, 3, -1, -1)
             mask_down = torch.nn.functional.interpolate(real_mask, size=(self.img_nerf_h, self.img_nerf_w), mode='bilinear', align_corners=False).expand(-1, 3, -1, -1)#, antialias=True
         else:
@@ -714,31 +627,15 @@ class Model(BaseModel):
         real_img3 = real_image_t[:,:3,...]
         nerf_img3 = nerf_latent[:,:3,...]
 
-        #tex rec
+        #
         self.loss_tex=0
         self.loss_Rerender = 0
         self.loss_nr_pred_mask = 0
 
-        if self.opt.nr_pred_mask:
-            offset = 3
-            self.loss_G_Mask = self.criterionL1(fake_image[:,offset:offset+1,...] * (mask_full[:,[0],...] if mask_full is not None else 1), real_mask * (mask_full[:,[0],...] if mask_full is not None else 1))
-
         if infer: return 1
 
         # Face loss
-        if (self.opt.use_face and (not is_aug_this_epoch)):            
-            if self.opt.is_crop:
-                #b,c,h,w
-                self.head_bbox[0][0] -= self.opt.x0_crop
-                self.head_bbox[0][2] -= self.opt.x0_crop
-                
-                self.head_bbox[0][1] -= self.opt.y0_crop
-                self.head_bbox[0][3] -= self.opt.y0_crop
-                
-            self.process_head_box(self.head_bbox, (fake_image.shape[-2], fake_image.shape[-1]))                
-            self.loss_Face = self.criterionFace(fake_image[:,:3,...], real_image_t[:,:3,...], bbox1=self.head_bbox, bbox2=self.head_bbox)                
-        else:
-            self.loss_Face = 0
+        self.loss_Face = 0
 
         self.loss_G_L1 = self.criterionL1(fake_image[:,:3,...] * (mask_full if mask_full is not None else 1), real_image_t[:,:3,...] * (mask_full if mask_full is not None else 1))
     
@@ -750,13 +647,27 @@ class Model(BaseModel):
 
         #nerf_rec
         self.loss_nerf_rec = self.criterionL1(real_downsample * (mask_down if mask_down is not None else 1), nerf_img3 * (mask_down if mask_down is not None else 1))
-    
-        D_input_img_fake = fake_img3
-        D_input_img_real = real_img3
-        if self.opt.motion.ab_D_pose:
-            D_input_img_real = torch.cat((D_input_img_real, posed_uv), 1)
-            D_input_img_fake = torch.cat((D_input_img_fake, posed_uv), 1)
-    
+
+
+        if self.opt.motion.ab_Ddual: #updample NeRF
+            
+            nerf_upsample = torch.nn.functional.interpolate(nerf_img3, size=(gen_h, gen_w), mode='bilinear', align_corners=False)#, antialias=True
+
+            D_input_img_fake = torch.cat((fake_img3, nerf_upsample), 1)
+
+            real_uped = torch.nn.functional.interpolate(real_downsample, size=(gen_h, gen_w), mode='bilinear', align_corners=False)#, antialias=True
+            D_input_img_real = torch.cat((real_img3, real_uped), 1)
+
+            if self.opt.motion.ab_D_pose:
+                D_input_img_real = torch.cat((D_input_img_real, posed_uv), 1)
+                D_input_img_fake = torch.cat((D_input_img_fake, posed_uv), 1)
+        else:
+            D_input_img_fake = fake_img3
+            D_input_img_real = real_img3
+            if self.opt.motion.ab_D_pose:
+                D_input_img_real = torch.cat((D_input_img_real, posed_uv), 1)
+                D_input_img_fake = torch.cat((D_input_img_fake, posed_uv), 1)
+        
         pred_fake_0 = self.netD_img(D_input_img_fake)
         if self.opt.motion.use_org_gan_loss:
             ggan = self.criterionGAN(pred_fake_0, True)
@@ -764,6 +675,7 @@ class Model(BaseModel):
             ggan = networks.g_nonsaturating_loss(pred_fake_0) if not infer else 0
         self.loss_G_GAN = ggan
     
+        # GAN feature matching loss
         self.loss_G_GAN_Feat = 0
 
         if not self.opt.no_ganFeat_loss:
@@ -804,34 +716,18 @@ class Model(BaseModel):
         D_input_img_fake = (self.D_input_img_fake_detach)
         D_input_img_real = (self.D_input_img_real_detach)
 
-        is_label_noisy = False
-
         D_input_img_fake_tmp = D_input_img_fake
         D_input_img_real_tmp = D_input_img_real.requires_grad_(True)
 
-        if self.opt.motion.use_org_gan_loss:
-            fake_query = self.fake_pool.query(D_input_img_fake_tmp)
-            pred_fake = self.netD_img(fake_query)
-            self.loss_D_fake = self.criterionGAN(pred_fake, False)
+        fake_query = self.fake_pool.query(D_input_img_fake_tmp)
+        pred_fake = self.netD_img(fake_query)
+        self.loss_D_fake = self.criterionGAN(pred_fake, False)
 
-            # Real Detection and Loss
-            pred_real = self.netD_img(D_input_img_real_tmp)
-            self.loss_D_real = self.criterionGAN(pred_real, True)
-            self.loss_D_grad = 0
-        else:
-            #dual discriminator
-            pred_fake = self.netD_img(D_input_img_fake_tmp)
-            pred_real = self.netD_img(D_input_img_real_tmp)
-            self.loss_D_real, self.loss_D_fake = networks.d_logistic_loss(pred_real, pred_fake, tmp = tmp)
-        
-            if self.opt.dual_discrim_eg3d:                
-                self.loss_D_grad_penalty = networks.d_r1_loss_eg3d(pred_real, [D_input_img_real_tmp])
-            else:
-                self.loss_D_grad_penalty = networks.d_r1_loss(pred_real, D_input_img_real_tmp)
-                #self.loss_D_grad_penalty = networks.d_r1_loss(pred_real, D_input_img_real_tmp)
-            self.loss_D_grad = self.loss_D_grad_penalty
-
-
+        # Real Detection and Loss
+        pred_real = self.netD_img(D_input_img_real_tmp)
+        self.loss_D_real = self.criterionGAN(pred_real, True)
+        self.loss_D_grad = 0
+            
     def discriminate(self, net, input, use_pool=False):
 
         if use_pool:
@@ -840,24 +736,12 @@ class Model(BaseModel):
         else:
             return net.forward(input)
 
-
     def evaluate(self, data):
         self.is_evaluate = True
         return self.forward_G(data, True)
 
-    #def optimize_parameters(self, data, is_opt_G = False):
     def forward_calc_loss(self, data, is_opt_G = False, is_opt_D = False, is_opt_Dr1 = False):
-
-        if self.opt.debug_only_nerf:
-            self.opt.hypara.w_G_GAN = 0
-            self.opt.hypara.w_Face = 0
-            self.opt.hypara.w_G_L1 = 0
-            self.opt.hypara.w_G_feat = 0
-            self.opt.hypara.w_G_feat = 0
-            self.opt.hypara.w_D = 0
-            self.opt.hypara.w_D_grad = 0
-            self.opt.hypara.w_posmap = 0
-        
+ 
         if is_opt_G:
 
             loss_weight = {
@@ -930,6 +814,7 @@ class Model(BaseModel):
     def forward(self, data, is_opt_G = False, is_opt_D = False, is_opt_Dr1 = False):
         return self.forward_calc_loss(data, is_opt_G = is_opt_G, is_opt_D = is_opt_D, is_opt_Dr1 = is_opt_Dr1)
 
+
     def compute_visuals(self, epoch):
 
         ind=0
@@ -937,10 +822,10 @@ class Model(BaseModel):
 
         if self.opt.vrnr_mesh_demo and not self.isTrain:
             mesh_dir = os.path.join(self.save_dir, "web/mesh")
-            os.makedirs(mesh_dir)
+            os.makedirs(mesh_dir, exist_ok=True)
             
             mesh_dir = os.path.join(self.save_dir, "web/mesh/%d" % self.opt.vrnr_voxel_factor)
-            os.makedirs(mesh_dir)
+            os.makedirs(mesh_dir, exist_ok=True)
 
             save_filename = '%s.obj' % (self.frame_index)
             save_path = os.path.join(mesh_dir, save_filename)    
@@ -952,19 +837,17 @@ class Model(BaseModel):
             print("mesh saved", save_path)
             return
         
-        if self.rendered_viz is not None:
-            self.rendered_viz = util.tensor2im(self.rendered_viz[ind][0:3, :, :])
 
         self.uv_lat, self.uv_lat_2d, self.pose_lat, self.pose_lat_2d, self.posed_uv_lat = None, None, None, None, None
         
         self.fake_image = util.tensor2im(self.fake_image[ind])
-                
+        
         self.real_image_t = util.tensor2im(self.real_image_t[ind])
         
         self.nr_uv = self.nr_uv[ind].permute(1,2,0).cpu().numpy()
         im0 = np.zeros((self.nr_uv.shape[0], self.nr_uv.shape[1], 1))
         self.nr_uv = np.concatenate((im0, self.nr_uv), 2) * 255
-       
+      
         row2 = []
         r2list = ["tex_feat", "nerf_rec"]
 
@@ -1037,14 +920,14 @@ class Model(BaseModel):
         self.visOutput = np.concatenate((row1, row2), 0)
 
         self.is_evaluate = False
-        #self.gen_mask = util.tensor2im(self.gen_mask[ind])[...,None].repeat(3,2)
+
     def normalize_tensor(self, input):
         max_d = input.max()
         min_d = input.min()        
         return (input - min_d) / (max_d - min_d)
          
     def update_fixed_params(self):
-        return        
+        return
     
     def update_learning_rate(self):
         self.old_lr_D -=  self.opt.D_lr / self.opt.niter_decay
@@ -1056,15 +939,14 @@ class Model(BaseModel):
             param_group['lr'] = self.old_lr
         if self.opt.verbose:
             print('update learning rate D: %f -> %f, %f -> %f' % (self.opt.lr_d, self.old_lr_D, self.opt.lr, self.old_lr))
-        #self.old_lr = lr
     
     def load_all(self, epoch = "", resume = True):
                 
+        print(self.save_dir, epoch)
         begin_epoch, epoch_iter, lr = load_model(self.save_dir, self,
                        None, None,
                        scheduler = None, recorder =  None,
                        resume = resume, epoch = epoch)
-        
         return begin_epoch, epoch_iter
      
     def save_all(self, label = "", epoch = -1, iter = 0):

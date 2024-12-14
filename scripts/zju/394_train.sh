@@ -5,7 +5,7 @@ gpu="${id}"
  
 method="--use_style --learn_3d --use_posmap --uvVol_2d --nr_pose_dep_uv"
 
-config="--config zju/motion_313_fv.yml --project_config uvm.yml --method_config motion.yml"
+config="--config zju/motion_394_fv.yml --project_config uvm.yml --method_config motion.yml"
 
 render="--superreso LightSup --vrnr"
 setup="--motion_mode --uv_type SMPL --uv_reso 256 --batchSize 1"
@@ -15,7 +15,7 @@ ab="--c_velo  --c_acce --c_traj --velocity 1 --pred_pose_uv --pred_normal_uv --a
 
 aug="--small_rot --aug_nr"
 
-modelname="train2_313_Mp3dS"
+modelname="train_394_Mp3dS"
 debug=""
 
 epoch="--niter 200 --niter_decay 0"

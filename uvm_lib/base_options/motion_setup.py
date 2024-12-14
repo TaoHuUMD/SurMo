@@ -2,9 +2,7 @@ import argparse
 import os
 
 
-def import_project_opt(parser):
-
-    parser.add_argument("--extract_gt_images", action='store_true', help='')
+def set_motion(parser):
 
     motion = parser.add_argument_group('motion')
 
@@ -22,13 +20,13 @@ def import_project_opt(parser):
     motion.add_argument("--nerf_dim", type=int, default=32, help='dim of nerf input')
 
     motion.add_argument('--aug_random_flip', action='store_true', help="")
+
     motion.add_argument("--use_global_posemap", action='store_true', help='whether use global verts in posemap')
 
-    #2 no nerf
-    #--ab_only_sup_dynamic_tex
+    motion.add_argument("--is_pad_img", action='store_true', help='pad rectangle image to square')
+
     motion.add_argument("--ab_sup_only_dynamic_tex", action='store_true', help='no nerf, only supreso posemap out')
     
-    #3 no nerf, supp. cond on static style.        
     motion.add_argument("--ab_sup_only_static_style", action='store_true', help='no nerf, only supreso on style')
 
 

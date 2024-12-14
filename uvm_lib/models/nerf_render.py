@@ -1,44 +1,38 @@
-
-##NeRF renderer. 
-
-from numpy.core.fromnumeric import argmax
 import torch
-import cv2
 
-from uvm_lib.engine.thutil.num import index_2d_dimension
-from uvm_lib.engine.thutil.io.prints import *
-from uvm_lib.engine.thutil.networks import embedder
+from Engine.th_utils.load_smpl_tmp import *
+from Engine.th_utils.my_pytorch3d.vis import *
 
-from termcolor import colored
+from Engine.th_utils.num import index_2d_dimension
+from Engine.th_utils.io.prints import *
 
-import mcubes
-import trimesh
+from Engine.th_utils.networks import embedder
+
 import numpy as np
-
-from uvm_lib.engine.thutil.networks.nerf_util.nerf_net_utils import *
-from uvm_lib.engine.thutil.networks.nerf_util import nerf_data_util as if_nerf_dutils
+from Engine.th_utils.networks.nerf_util.nerf_net_utils import *
+from Engine.th_utils.networks.nerf_util import nerf_data_util as if_nerf_dutils
 
 is_debug = False
 
 class NerfRender(nn.Module):
     
-    def __init__(self, opt=None, smpl_util=None, phase = "train", netNerf = None):
+    def __init__(self, opt=None, smpl_render=None, phase = "train", netNerf = None):
         
         super(NerfRender, self).__init__()
 
         self.opt = opt
-     
-        if netNerf is not None:
-            self.netNerf = netNerf 
-             
+        
+        self.netNerf = netNerf     
         self.isTrain = False
         self.phase = phase
         if phase=="train":
             self.isTrain = True
+
         self.image_size = (int(self.opt.img_H * self.opt.nerf_ratio), int(self.opt.img_W * self.opt.nerf_ratio))
         
         self.head_bbox = None
 
+        self.smpl_render = smpl_render
     
     def get_sub_loss(self):
         return self.netNerf.get_sub_loss()
@@ -47,8 +41,9 @@ class NerfRender(nn.Module):
                 
         ray_o = batch["ray_o"]
         ray_d = batch["ray_d"]
-        ray_coord = batch["ray_coord"]        
-        depth_multi = batch["lr_depth"]
+        ray_coord = batch["ray_coord"]
+
+        depth_multi, silh_mask, cur_world_human, cur_smpl_human = batch["lr_depth"], None, None, None
      
         ray_o_list = []
         ray_d_list = []
@@ -76,7 +71,7 @@ class NerfRender(nn.Module):
             ray_d_list.append(ray_d_tmp)
             full_idx_list = full_idx_tmp
 
-        ray_o = ray_o_list[0]#torch.cat(ray_o_list[0],1)
+        ray_o = ray_o_list[0]
         ray_d = ray_d_list[0]
     
         interval = torch.tensor(self.opt.max_ray_interval).to(depth)        
@@ -115,10 +110,10 @@ class NerfRender(nn.Module):
         z_vals = near[..., None] * (1. - t_vals) + far[..., None] * t_vals
         
         if True and self.opt.perturb > 0. and self.isTrain:
-            # get intervals between samples
             mids = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
             upper = torch.cat([mids, z_vals[..., -1:]], -1)
             lower = torch.cat([z_vals[..., :1], mids], -1)
+            # stratified samples in those intervals
             t_rand = torch.rand(z_vals.shape).to(upper)
             z_vals = lower + (upper - lower) * t_rand
                 
@@ -126,8 +121,7 @@ class NerfRender(nn.Module):
 
         pts = ray_o[:, :, None] + ray_d[:, :, None] * z_vals[..., None]
 
-        return pts, z_vals, ray_o, ray_d, full_idx_list
-    
+        return pts, z_vals, ray_o, ray_d, full_idx_list, silh_mask, cur_world_human, cur_smpl_human, None
 
     def get_sampling_points(self, ray_o, ray_d, near, far):
 
@@ -186,6 +180,7 @@ class NerfRender(nn.Module):
         R = batch['R']
         sh = pts.shape
 
+        #scaling
         if self.opt.use_smpl_scaling:
             pts /= batch["scaling"]
 
@@ -193,14 +188,7 @@ class NerfRender(nn.Module):
         pts = pts.view(*sh)
 
         return pts
-    
-    def get_headbox(self):
-        if self.head_bbox is not None:
-            return self.head_bbox        
-    
-    def get_dilated_depth(self):
-        return self.dila_depth
-    
+   
     def world_pts_to_screen(self, pts, batch):
         if 'Ks' not in batch:
             __import__('ipdb').set_trace()
@@ -224,7 +212,9 @@ class NerfRender(nn.Module):
             H, W = int(self.opt.org_img_reso * self.opt.ratio), int(self.opt.org_img_reso * self.opt.ratio)
             pts2d[..., 0] = torch.clamp(pts2d[..., 0], 0, W - 1)
             pts2d[..., 1] = torch.clamp(pts2d[..., 1], 0, H - 1)
-                
+            
+        print(pts2d.shape)
+    
     def prepare_sp_input(self, batch):
         # feature, coordinate, shape, batch size
         sp_input = {}
@@ -235,10 +225,12 @@ class NerfRender(nn.Module):
 
         # coordinate: [N, 4], batch_idx, z, y, x
         sh = batch['coord'].shape
+        #printb("sh", sh)
         idx = [torch.full([sh[1]], i, dtype=torch.long) for i in range(sh[0])]
 
         idx = torch.cat(idx).to(batch['coord'])
         coord = batch['coord'].view(-1, sh[-1])
+        #printg(coord.shape, idx[:, None].shape, sh)
 
         if batch['coord'].shape[-1] == 3:
             batch['coord'] = torch.cat([idx[:, None], coord], dim=1)
@@ -261,7 +253,6 @@ class NerfRender(nn.Module):
         grid_coords = dhw[..., [2, 1, 0]]
         return grid_coords
 
-    # def batchify_rays(self, rays_flat, chunk=1024 * 32, net_c=None):
     def batchify_rays(self,
                       sp_input,
                       grid_coords,
@@ -276,7 +267,6 @@ class NerfRender(nn.Module):
         part_loss_list = []
         
         for i in range(0, grid_coords.shape[1], chunk):
-            # ret = self.render_rays(rays_flat[i:i + chunk], net_c)
             ret, part_loss = self.net(sp_input, grid_coords[:, i:i + chunk],
                            viewdir[:, i:i + chunk] if viewdir is not None else None, light_pts[:, i:i + chunk], only_density)
             all_ret.append(ret)
@@ -287,6 +277,7 @@ class NerfRender(nn.Module):
 
     def get_render_mesh_pts(self, vertices):
 
+        # obtain the original bounds for point sampling
         xyz = vertices.detach().cpu().numpy()[0]
         min_xyz = np.min(xyz, axis=0)
         max_xyz = np.max(xyz, axis=0)
@@ -323,7 +314,7 @@ class NerfRender(nn.Module):
 
 
     def get_render_mesh_pts_sample(self, vertices):
-        
+
         xyz = vertices.clone()
 
         near = xyz - self.interval
@@ -362,9 +353,9 @@ class NerfRender(nn.Module):
         for i in range(batch_size):
 
             if self.opt.dataset != "h36":
-                rgb_i, ray_o_i, ray_d_i, near_i, far_i, coord_i, mask_at_box_i = if_nerf_dengine.sample_ray(batch[img_label][i].cpu().numpy(), batch[msk_label][i].cpu().numpy(), batch[cam_k_label][i].cpu().numpy(), batch["Cam_R"][i].cpu().numpy(), batch["Cam_T"][i].cpu().numpy(), batch["can_bounds"][i].cpu().numpy(), self.opt.nrays, split[i], self.opt, is_high)
+                rgb_i, ray_o_i, ray_d_i, near_i, far_i, coord_i, mask_at_box_i = if_nerf_dutils.sample_ray(batch[img_label][i].cpu().numpy(), batch[msk_label][i].cpu().numpy(), batch[cam_k_label][i].cpu().numpy(), batch["Cam_R"][i].cpu().numpy(), batch["Cam_T"][i].cpu().numpy(), batch["can_bounds"][i].cpu().numpy(), self.opt.nrays, split[i], self.opt, is_high)
             else:
-                rgb_i, ray_o_i, ray_d_i, near_i, far_i, coord_i, mask_at_box_i = if_nerf_dengine.sample_ray_h36m(batch[img_label][i].cpu().numpy(), batch[msk_label][i].cpu().numpy(), batch[cam_k_label][i].cpu().numpy(), batch["Cam_R"][i].cpu().numpy(), batch["Cam_T"][i].cpu().numpy(), batch["can_bounds"][i].cpu().numpy(), self.opt.nrays, split[i], self.opt)
+                rgb_i, ray_o_i, ray_d_i, near_i, far_i, coord_i, mask_at_box_i = if_nerf_dutils.sample_ray_h36m(batch[img_label][i].cpu().numpy(), batch[msk_label][i].cpu().numpy(), batch[cam_k_label][i].cpu().numpy(), batch["Cam_R"][i].cpu().numpy(), batch["Cam_T"][i].cpu().numpy(), batch["can_bounds"][i].cpu().numpy(), self.opt.nrays, split[i], self.opt)
 
             rgb_list.append(rgb_i[None,...])
             ray_o_list.append(ray_o_i[None,...])
@@ -399,15 +390,18 @@ class NerfRender(nn.Module):
         
         self.sample_pts(batch, is_multi_scale)
         
+        is_check_dilation = False
+
+        head_bbox = 0        
         if not is_multi_scale and (not self.opt.no_local_nerf):
-            pts, z_vals, ray_o, ray_d, full_idx  = \
+            pts, z_vals, ray_o, ray_d, full_idx, silh_mask, cur_world_human, cur_smpl_human, head_bbox  = \
                 self.get_sampling_points_depth(batch)
             sh = ray_o.shape
 
         else:
 
             if not is_multi_scale and self.opt.sample_all_pixels:
-                pts, z_vals, ray_o, ray_d, full_idx  = \
+                pts, z_vals, ray_o, ray_d, full_idx, silh_mask, cur_world_human, cur_smpl_human,_  = \
                 self.get_sampling_points_depth(batch)
                 sh = ray_o.shape
             else:
@@ -423,29 +417,15 @@ class NerfRender(nn.Module):
          
         check_mesh = (self.opt.check_mesh and is_output_mesh)
         
-        if check_mesh:
-            
-            smpl_vertices = batch['feature'][...,:3]
-            smpl_world_pts = self.pts_to_world(smpl_vertices, batch)
-            pts,_ = self.get_render_mesh_pts(smpl_world_pts)
-
-            p_sh_3d = pts.shape            
-            pts = pts.reshape(batch_size, -1 ,3)
-            
-        elif is_output_mesh and self.opt.check_can_mesh:
-            pts,_ = self.get_render_mesh_pts(self.net.get_current_can_vertices()[None,...])
-
-            f = self.net.get_smpl_faces().detach().cpu().numpy()
-
-            p_sh_3d = pts.shape
-            pts = pts.reshape(batch_size, -1 ,3)
+      
 
         world_pts = pts.clone()
 
         pts = self.pts_to_can_pts(pts, batch)
         grid_p = pts
             
-            
+        verify_sampling = False
+                    
         self.prepare_sp_input(batch)
         sp_input = batch
                         
@@ -457,14 +437,10 @@ class NerfRender(nn.Module):
     
         ray_d0 = ray_d.clone()  #batch['ray_d']
 
-        if check_mesh:
-            viewdir = None
-        else:
-            viewdir = ray_d0 / torch.norm(ray_d0, dim=2, keepdim=True)            
-            viewdir = embedder.view_embedder(viewdir)
-            viewdir = viewdir[:, :, None].repeat(1, 1, pts.size(2), 1).contiguous()
-            viewdir = viewdir.view(sh[0], -1, embedder.view_dim)
-    
+        viewdir = ray_d0 / torch.norm(ray_d0, dim=2, keepdim=True)            
+        viewdir = embedder.view_embedder(viewdir)
+        viewdir = viewdir[:, :, None].repeat(1, 1, pts.size(2), 1).contiguous()
+        viewdir = viewdir.view(sh[0], -1, embedder.view_dim)
 
         grid_coords = grid_p.view(sh[0], -1, 3)
             
@@ -481,7 +457,8 @@ class NerfRender(nn.Module):
         return_eikonal = True if (self.isTrain and self.opt.use_sdf_render) else False
         if return_eikonal:
             grid_p.requires_grad = True
-        else:            
+
+        if True:            
             """Render rays in smaller minibatches to avoid OOM.
             """
             chunk = 1024 * 32
@@ -490,38 +467,16 @@ class NerfRender(nn.Module):
                 chunk = 1024 * 8
             
             all_ret = []
-            
-            for i in range(0, grid_p.shape[1], chunk):
 
+            for i in range(0, grid_p.shape[1], chunk):
                 sp_input['sampled_pts_world'] = world_pts[:, i:i + chunk]
                 sp_input['sampled_pts_smpl'] = grid_p[:, i:i + chunk]
                 sp_input['view_dir'] = viewdir[:, i:i + chunk] if viewdir is not None else None
-                              
+            
                 ret = self.netNerf(sp_input, input_latent, check_mesh)
                 all_ret.append(ret)
 
             raw = torch.cat(all_ret, 1)
-
-
-        if check_mesh or self.opt.vrnr_mesh_demo or self.opt.nerf_mesh_demo:
-
-            alpha = raw[0, :, 0].detach().cpu().numpy()
-            
-            inside = 0
-
-            cube = np.zeros(p_sh_3d[1:-1])
-
-            if inside == 0:
-                cube = alpha.reshape(p_sh_3d[1:-1])
-            else:
-                inside = inside.detach().cpu().numpy()
-                cube[inside == 1] = alpha
-
-            cube = np.pad(cube, 10, mode='constant')
-            vertices, triangles = mcubes.marching_cubes(cube, self.opt.meth_th) #self.opt.mesh_th
-            mesh = trimesh.Trimesh(vertices, triangles)
-
-            return {'cube': cube, 'mesh': mesh}
 
         raw = raw.reshape(-1, z_vals.size(2), raw.shape[-1])
 
@@ -530,9 +485,10 @@ class NerfRender(nn.Module):
         z_vals = z_vals.view(-1, z_vals.size(2))
         ray_d = ray_d.view(-1, 3)
         
+
         rgb_map, disp_map, acc_map, weights, depth_map, cum = raw2outputs(
             raw, z_vals, ray_d, self.opt.raw_noise_std, self.opt.white_bg, self.opt)
-    
+
         rgb_map = rgb_map.view(*sh[:-1], -1)
         acc_map = acc_map.view(*sh[:-1])
         depth_map = depth_map.view(*sh[:-1])
@@ -550,6 +506,7 @@ class NerfRender(nn.Module):
                 ret_full_acc = torch.zeros(batch_size, all_ray_num).to(raw)
                 ret_full_depth = torch.zeros(batch_size, all_ray_num).to(raw)
 
+
                 ret_full_rgb[full_idx_0] = rgb_map
                 ret_full_acc[full_idx_0] = acc_map
                 ret_full_depth[full_idx_0] = depth_map
@@ -560,8 +517,7 @@ class NerfRender(nn.Module):
               
         ret={}
         
-        if check_mesh:
-            ret.update(mesh_ret)
+      
 
         if (not is_multi_scale) and (self.opt.vrnr or self.opt.uv3dNR):
             mask = batch['mask_at_box']
@@ -582,7 +538,6 @@ class NerfRender(nn.Module):
             if self.opt.white_bg:
                 nerf_img_pred = torch.ones((H, W, pred_c), device=device)
             else:
-                if debug_bk: printg("background zeros")
                 nerf_img_pred = torch.zeros((H, W, pred_c), device=device)
                             
             nerf_depth_pred = torch.zeros((H, W, 1), device=device)
@@ -592,11 +547,11 @@ class NerfRender(nn.Module):
             
             nerf_depth_pred[mask_at_box] = ret_full_depth[...,None]
 
-            nerf_img_pred, nerf_depth_pred, None, None
+            return nerf_img_pred, nerf_depth_pred, None, None
         
         else:
             
             if (not self.opt.no_local_nerf) or self.opt.sample_all_pixels:               
                 return ret_full_rgb, ret_full_depth, None, None
-            else:               
+            else:                
                 return rgb_map, depth_map, None, None

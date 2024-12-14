@@ -1,4 +1,4 @@
-from uvm_lib.engine.lib.options.train_options import TrainOptions
+from ..base_options.train_options import TrainOptions
 from .project_option import import_project_opt
 
 

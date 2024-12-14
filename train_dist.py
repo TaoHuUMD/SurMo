@@ -3,10 +3,6 @@ import time
 import os
 import numpy as np
 import torch
-from torch.autograd import Variable
-from collections import OrderedDict
-from subprocess import call
-import fractions
 os.environ["NCCL_DEBUG"] = "INFO"
 import copy
 
@@ -27,25 +23,27 @@ from torch.nn.modules import module
 import sys
 sys.path.append("..")
 
-from uvm_lib.engine.lib.data.data_loader import CreateDataLoader, CreateDataLoaderDistributed, CreateDataset
 
-from uvm_lib.engine.lib.models.models import create_model
-from uvm_lib.engine.lib.util.visualizer import Visualizer
+from Engine.th_utils.networks import networks 
 
-from uvm_lib.engine.thutil.networks import networks 
+from Engine.th_utils.io.prints import *
 
-from uvm_lib.engine.thutil.io.prints import *
+from Engine.th_utils.distributed.distributed import synchronize
 
-from uvm_lib.engine.thutil.distributed.distributed import get_rank, synchronize, reduce_loss_dict, reduce_sum, get_world_size
+from Engine.th_utils.networks.networks import accumulate
 
-from uvm_lib.engine.thutil.networks.networks import accumulate
-
-from uvm_lib.engine.thutil.distributed.sampler import data_sampler
+from Engine.th_utils.distributed.sampler import data_sampler
 
 from uvm_lib.options.train_option import ProjectOptions
 
+
+from uvm_lib.data.data_loader import CreateDataLoader, CreateDataLoaderDistributed, CreateDataset
+from uvm_lib.models.models import create_model
+from uvm_lib.util.visualizer import Visualizer
+
 import warnings
 warnings.filterwarnings("ignore")
+
 
 def setup_training(opt, datasize):
     opt.max_iters_epoch = 500
@@ -54,30 +52,9 @@ def setup_training(opt, datasize):
     opt.eva_epoch_freq = 5
     opt.save_epoch_freq = int(total_epoch / 5)
 
-
-    if opt.debug_small_data:
-        opt.max_iters_epoch = dataset_size
-
     opt.print_freq = 20
     opt.display_freq = int(opt.max_iters_epoch / 2)
 
-    if opt.debug_small_data:
-        opt.print_freq = 1
-        opt.display_freq = 5
-        opt.eva_epoch_freq = 50
-        opt.save_latest_freq = 1000
-        opt.save_epoch_freq = 1000
-        total_epoch = 1000
-        opt.niter = 1000
-  
-    if opt.debug_val:
-        opt.save_epoch_freq = 1        
-        opt.eva_epoch_freq = 1
-        opt.eva_freq = 1
-
-    if opt.test_overfitting:
-        printg(os.path.join(opt.checkpoints_dir, opt.name))
-        os.system("rm -r %s" % os.path.join(opt.checkpoints_dir, opt.name))
 
 def dist_init_new(opt):
     strgpu=""
@@ -89,7 +66,7 @@ def dist_init_new(opt):
     opt.world_size = torch.cuda.device_count()    
     assert opt.world_size ==  len(opt.gpu_ids)
 
-    printg(strgpu, opt.world_size, opt.local_rank)
+    print(strgpu, opt.world_size, opt.local_rank)
 
     if not opt.training.distributed:
         opt.training.distributed = len(opt.gpu_ids) > 1
@@ -122,7 +99,6 @@ def split_dict_batch(d, n=1):
     keys = list(d.keys())
     batch_size = len(d[keys[0]])
     if batch_size==1: yield d
-    #for i in range(0, len(keys), n):
     for i in range(0, batch_size, n):
         yield {k: d[k][i:i+n] for k in keys}
 
@@ -134,15 +110,13 @@ def make_uv_noise(opt):
 
 if __name__ == "__main__":
     
-    printg('train')
+    print('train')
 
     opt = ProjectOptions().parse()
     
     dist_init_new(opt)
     
-
     opt.continue_train = True
-
     opt.phase = "train"
     train_dataset = CreateDataset(opt, "train")
 
@@ -164,18 +138,13 @@ if __name__ == "__main__":
     eva_opt.phase = "evaluate"
     eva_opt.batchSize = 1
     model_ema = create_model(eva_opt) #estimate ema = True
-
     model.apply(networks.weights_init)
     
-
-
     #load dataset
     if opt.rank == 0:            
-        printg('#training images = %d' % dataset_size)
-        printg("##batch size ", opt.batchSize)
-        printy('#evaluation images = %d' % len(eva_data_loader))
-
-
+        print('#training images = %d' % dataset_size)
+        print("##batch size ", opt.batchSize)
+        print('#evaluation images = %d' % len(eva_data_loader))
 
     if opt.training.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -185,22 +154,23 @@ if __name__ == "__main__":
             device_ids=[opt.gpu],
             output_device=opt.gpu,
             broadcast_buffers=False
-        )#, find_unused_parameters=True,
+        )
 
     model_ema_no_dpp = model_ema.module
     model_no_dpp = model.module
 
-    #opt.training.local_rank
     if opt.rank == 0:
-        printg("load model:")
+        print("load model:")
+    
+    # start_epoch = 1
+    # epoch_iter = 0
     start_epoch, epoch_iter = model_no_dpp.load_all(opt.which_epoch, True)
     if start_epoch == -1:
-        start_epoch, epoch_iter = 1, 0
+       start_epoch, epoch_iter = 1, 0
     print('Resuming from epoch %d / %d at iteration %d' % (start_epoch, opt.niter + opt.niter_decay, epoch_iter))
-
     model_ema.eval()
     accumulate(model_ema_no_dpp, model_no_dpp, 0)
-    _,_ = model_ema_no_dpp.load_all("ema_latest", True) #% opt.which_epoch
+    _,_ = model_ema_no_dpp.load_all("ema_latest", True)
     
     model.train()
     iter_path = os.path.join(opt.checkpoints_dir, opt.name, 'iter.txt')
@@ -215,9 +185,8 @@ if __name__ == "__main__":
     accum = 0.5 ** (32 / (10 * 1000))
 
     actual_batch_size = opt.gpu_num * opt.batchSize
-    #actual_batch_size = opt.batchSize
 
-    printg("actual batch size ", actual_batch_size)
+    print("actual batch size ", actual_batch_size)
 
     for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         np.random.seed(epoch)
@@ -227,7 +196,6 @@ if __name__ == "__main__":
 
         epoch_start_time = time.time()
         if epoch != start_epoch:
-        #    epoch_iter = epoch_iter % dataset_size
             epoch_iter = 0
         
         last_time = time.time()
@@ -236,7 +204,7 @@ if __name__ == "__main__":
         
         if epoch > start_epoch + 2:
             opt.print_freq = 20
-            opt.display_freq = int(opt.max_iters_epoch * 5) #display per 5 epoch
+            opt.display_freq = int(opt.max_iters_epoch * 5)
         else:
             opt.print_freq = 10
 
@@ -270,25 +238,22 @@ if __name__ == "__main__":
 
             model.module.optimizer_G.zero_grad()
             loss_G = model(data, is_opt_G = True)
-            #printb('loss G ', loss_G)
             loss_G.backward()#
             model.module.optimizer_G.step()
 
 
-            is_opt_D = True #if i % 5 == 0 else False
-            is_opt_Dr1 = True #if i % 10 == 0 else False
+            is_opt_D = True 
+            is_opt_Dr1 = True 
             if is_opt_D or is_opt_Dr1:
                 model.module.requires_grad_D(True)
                 model.module.requires_grad_G(False)  
                 model.module.optimizer_D.zero_grad()
                 
                 loss_D = model(data, is_opt_D = is_opt_D, is_opt_Dr1 = is_opt_Dr1)
-                #printb('loss D', loss_D)
                 loss_D.backward()#
                 model.module.optimizer_D.step()
                         
             accumulate(model_ema_no_dpp, model_no_dpp, accum)
-
           
             if opt.rank == 0: 
                 last_time = time.time()
@@ -300,8 +265,7 @@ if __name__ == "__main__":
                     visualizer.plot_current_errors(losses, total_steps)
                     data_time_sum = 0
                     
-            ### display output images
-                if save_fake and (not opt.only_nerf): #or opt.Hash_NeRF
+                if save_fake: #
                     model.module.compute_visuals(epoch)
                     
                     tcid = data["cam_ind"][0] #.item() + 1
@@ -332,20 +296,18 @@ if __name__ == "__main__":
                 model.module.save_all(label = 'latest', epoch = epoch, iter = epoch_iter)
                 model_ema_no_dpp.save_all(label = 'ema_latest', epoch = epoch, iter = epoch_iter)
                 np.savetxt(iter_path, (epoch + 1, 0), delimiter=',', fmt='%d')
-                # os.sys('C:/Program Files/NVIDIA Corporation/NVSMI/nvidia-smi.exe')
 
             if is_eva and (epoch % opt.eva_epoch_freq  == 0):
-                printg("evaluate")
-                #model.eval()
+                print("evaluate")
                 for e_i, e_data in enumerate(eva_dataset, start=0):
-                    printg("start evaluating epoch")
+                    print("start evaluating epoch")
                     with torch.no_grad():
                         uvnoise = make_uv_noise(opt)
                         e_data["uvnoise"] = uvnoise
                         exp_out = model_ema_no_dpp.evaluate(e_data)
                         assert isinstance(exp_out,int)
                         if exp_out == -1: #error in this batch
-                            printg("errror in this batch")
+                            print("errror in this batch")
                             continue
                         model_ema_no_dpp.compute_visuals("evaluate")
 
@@ -358,7 +320,7 @@ if __name__ == "__main__":
                         visualizer.display_current_results(model_ema_no_dpp.get_current_visuals(),
                                                         epoch, "eva_%s_%s" % (tcid, tvid))
                 
-                printb("finish")  
+                print("finish")  
                 continue
                     
 
@@ -368,4 +330,4 @@ if __name__ == "__main__":
         if epoch > opt.niter:
             model.module.update_learning_rate()
 
-    sys.exit()#correct exit
+    sys.exit()

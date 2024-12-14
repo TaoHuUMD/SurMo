@@ -1,4 +1,4 @@
-from uvm_lib.engine.lib.options.evaluate_options import EvaluateOptions
+from ..base_options.evaluate_options import EvaluateOptions
 from .project_option import import_project_opt
 
 

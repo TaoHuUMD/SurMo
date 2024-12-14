@@ -5,7 +5,7 @@ gpu="${id}"
  
 method="--use_style --learn_3d --use_posmap --uvVol_2d --nr_pose_dep_uv"
 
-config="--config zju/motion_313_fv.yml --project_config uvm.yml --method_config motion.yml"
+config="--config zju/motion_387_fv.yml --project_config uvm.yml --method_config motion.yml"
 
 render="--superreso LightSup --vrnr"
 setup="--motion_mode --uv_type SMPL --uv_reso 256 --batchSize 1"
@@ -15,7 +15,7 @@ ab="--c_velo  --c_acce --c_traj --velocity 1 --pred_pose_uv --pred_normal_uv --a
 
 aug="--small_rot --aug_nr"
 
-modelname="train2_313_Mp3dS"
+modelname="pretrained_387_Mp3dS"
 debug=""
 
 epoch="--niter 200 --niter_decay 0"
@@ -33,14 +33,8 @@ if [ -z "$gpu" ]
   then
     gpu=$CUDA_VISIBLE_DEVICES
 fi
-
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export NVIDIA_VISIBLE_DEVICES=${gpu}
 export CUDA_VISIBLE_DEVICES=${gpu}
 
-MASTER_PORT=$((12000 + $RANDOM % 20000))
-gpures="${gpu//[^,]}"      
-NUM_GPU="${#gpures}"
-NUM_GPU=$((NUM_GPU+1))
-extra_opt="${extra_opt} --gpu_ids ${gpu}"
-
-python -W ignore -m torch.distributed.launch --nproc_per_node=${NUM_GPU} --master_port=${MASTER_PORT} train_dist.py ${cmd}
+python -W ignore test.py ${cmd}  --test_step_size 30 --test_eval

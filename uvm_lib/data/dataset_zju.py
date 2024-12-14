@@ -1,38 +1,31 @@
-import torch
-from termcolor import colored
-import torch.utils.data as data
-#from lib.utils import base_utils
-from PIL import Image
+#Developed upon the data loader of Neural Body by Peng et al.
+
 import numpy as np
-import json
 import os
 import imageio
 import cv2
-from plyfile import PlyData
 
-import pickle
+from Engine.th_utils.io.prints import *
+from Engine.th_utils.distributed.sampler import data_sampler
 
-import torchvision.transforms as transforms
-from PIL import Image, ImageOps, ImageDraw
-
-from uvm_lib.engine.thutil.io.prints import *
-from uvm_lib.engine.thutil.animation.free_view import gen_path
-from uvm_lib.engine.lib.data.base_dataset import BaseDataset
-from uvm_lib.engine.thutil.distributed.sampler import data_sampler
+from uvm_lib.data.base_dataset import BaseDataset
 
 class Dataset(BaseDataset):
  
+    def initSupp(self):
+        print(self.opt.dataroot, self.opt.phase)
+            
     def initialize(self, opt, phase, data_dict):
         self.opt = opt
         self.initSupp()
         
-        self.init(self.opt.dataroot, phase, data_dict)
+        self.initsdf(self.opt.dataroot, phase, data_dict)
         
-    def init(self, data_root, split, data_dict):
+    def initsdf(self, data_root, split, data_dict):
  
         data_flag = split
         short_dataset_name = data_dict["resname"]        
-        root_dir = '../data/zju_mocap'
+        root_dir = './data/dataset/zju_mocap'
         
         subdir = data_dict["dirname"]        
         self.data_root = os.path.join(root_dir, subdir)
@@ -49,11 +42,10 @@ class Dataset(BaseDataset):
     
         self.human = data_dict.dirname
             
-        ann_file = os.path.join(data_root, "annots.npy")        
+        ann_file = os.path.join(data_root, "annots.npy")
+        
         annots = np.load(ann_file, allow_pickle=True).item()
         self.cams = annots['cams']
-        self.load_meta_data(split)
-
 
         num_cams = len(self.cams['K'])
         self.full_num_cams = num_cams
@@ -62,7 +54,7 @@ class Dataset(BaseDataset):
         view_id = [int(v) for v in views]
         self.view_id = view_id
 
-
+            
         i_intv = data_dict.dataset_step
 
         if self.opt.motion_mode and split == 'train':
@@ -97,6 +89,9 @@ class Dataset(BaseDataset):
                   
             begin = data_dict["train_begin"]
             end = data_dict["train_end"]
+
+            if self.opt.debug_1pose_all_views:
+                end = [begin[0] + 1]
                 
             self.is_train = True
                 
@@ -112,20 +107,13 @@ class Dataset(BaseDataset):
             else:
                 begin = data_dict["test_begin"]
                 end = data_dict["test_end"]
-           
-            if self.opt.debug_1pose_all_views: 
-                end = [begin[0] + 1]
+
+            if self.opt.train_org_nb:
+                i_intv = 30
 
             i_intv = self.opt.test_step_size
 
-        if self.opt.demo_all:
-            begin = []
-            end = []            
-            frames = self.opt.demo_frame.split(" ")
-            for f in frames:
-                begin.append(int(f))
-                end.append(int(f) + 1)
-                
+
         ims = []
         cam_inds = []
 
@@ -135,7 +123,11 @@ class Dataset(BaseDataset):
         for i in range(len(begin)):
             b = begin[i]
             e = end[i]
-                    
+
+            if self.opt.new_split_tvcg: b -= 1
+        
+            if self.opt.add_one_test_frame: b += 1
+        
             ims.append(np.array([
                 np.array(ims_data['ims'])[view_id]
                 for ims_data in annots['ims'][b:e][::i_intv]
@@ -162,25 +154,39 @@ class Dataset(BaseDataset):
         self.full_cam_inds = np.array(full_cam_inds)[0]
 
         self.num_cams = len(view_id)
-
-        if self.opt.make_demo:
-            self.demo_setup()
-
-
-    def demo_setup(self):
-        if self.opt.motion.motion_chain:    
-            motion_steps = self.opt.motion.motion_steps.split(" ")
-            
-            self.ims = np.repeat(self.ims, len(motion_steps))
-            self.cam_inds = np.repeat(self.cam_inds, len(motion_steps))
-
-            self.full_ims = np.repeat(self.full_ims, len(motion_steps))
-            self.full_cam_inds = np.repeat(self.full_cam_inds, len(motion_steps))
+        
+        if self.opt.load_tmp_rendering:
+            dataset_name = self.opt.config[0].split("/")[1].split("_")[1]
+            outdir = os.path.join("./data/preprocessed_data/%s/CoreView_%s" % (self.opt.phase, dataset_name))
+            self.tmprendering = np.load(os.path.join(outdir, "%s_tmp_rendering.npz" % self.opt.phase), allow_pickle=True)["arr_0"].item()#.item()
 
     def get_train_sampler(self):
         print("base class data sampler")
         self.train_sampler = data_sampler(self, shuffle=True, distributed = self.opt.training.distributed)
         return self.train_sampler
+
+    def get_mask_full(self, index, is_load_training = False):
+        
+        msk_path = os.path.join(self.data_root, 'mask',
+                                self.full_ims[index])[:-4] + '.png'
+        msk_path_chip = os.path.join(self.data_root, 'mask_cihp',
+                    self.full_ims[index])[:-4] + '.png'
+            
+        msk = imageio.imread(msk_path)
+        msk = (msk != 0).astype(np.uint8)
+
+        msk_cihp = imageio.imread(msk_path_chip)
+        msk_cihp = (msk_cihp != 0).astype(np.uint8)
+
+        msk = (msk | msk_cihp).astype(np.uint8)
+
+        border = 5
+        kernel = np.ones((border, border), np.uint8)
+        msk_erode = cv2.erode(msk.copy(), kernel)
+        msk_dilate = cv2.dilate(msk.copy(), kernel)
+        msk[(msk_dilate - msk_erode) == 1] = 100
+
+        return msk
 
     def get_mask(self, index, is_load_training = False):
         
@@ -204,10 +210,11 @@ class Dataset(BaseDataset):
         msk[(msk_dilate - msk_erode) == 1] = 100
 
         return msk
-    
+
     def prepare_input(self, i):
 
-        frame_index = i                        
+        #i = frame_index
+        frame_index = i        
         vertices_path = os.path.join(self.data_root, "new_vertices",
                                      '{}.npy'.format(i))
         if not os.path.isfile(vertices_path): return None
@@ -215,8 +222,23 @@ class Dataset(BaseDataset):
         xyz = np.load(vertices_path).astype(np.float32)
         nxyz = np.zeros_like(xyz).astype(np.float32)
         world_xyz = np.copy(xyz)
-        
                 
+        if self.opt.free_view_rot_smpl:            
+            rel_id = frame_index - self.begin_frame[0]
+            t = self.ts[rel_id]            
+            rot_ = np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
+            
+            rot = np.eye(3)
+            rot[[0, 0, 1, 1], [0, 1, 0, 1]] = rot_.ravel()            
+            
+            center = np.mean(xyz, axis=0)
+            xyz = xyz - center
+            xyz = np.dot(xyz, rot.T)
+            xyz = xyz + center
+                        
+            xyz = xyz.astype(np.float32)
+            world_xyz = np.copy(xyz)
+        
         min_xyz = np.min(xyz, axis=0)
         max_xyz = np.max(xyz, axis=0)
         min_xyz[2] -= 0.05
@@ -239,7 +261,8 @@ class Dataset(BaseDataset):
         rot = np.array([[np.cos(0), -np.sin(0)], [np.sin(0), np.cos(0)]])
         rot = rot.astype(np.float32)
         trans = np.array([0, 0, 0]).astype(np.float32)
-                
+        
+        
         # obtain the bounds for coord construction
         min_xyz = np.min(xyz, axis=0)
         max_xyz = np.max(xyz, axis=0)
@@ -251,6 +274,7 @@ class Dataset(BaseDataset):
         cxyz = xyz.astype(np.float32)
         nxyz = nxyz.astype(np.float32)
         world_xyz = world_xyz.astype(np.float32)
+        #feature = np.concatenate([cxyz, nxyz], axis=1).astype(np.float32)
         feature = np.concatenate([cxyz, world_xyz], axis=1).astype(np.float32)
 
         # construct the coordinate
@@ -296,13 +320,11 @@ class Dataset(BaseDataset):
 
         msk[msk>0] = 1
         img[msk == 0] = 0
-
-
         ret = {}
 
         H_gen, W_gen = int(img.shape[0] * self.opt.gen_ratio), int(img.shape[1] * self.opt.gen_ratio)
-        img_gen = cv2.resize(img, (W_gen, H_gen)) 
-        msk_gen = cv2.resize(msk, (W_gen, H_gen)) 
+        img_gen = cv2.resize(img, (W_gen, H_gen)) #, interpolation=cv2.INTER_AREA)
+        msk_gen = cv2.resize(msk, (W_gen, H_gen)) #, interpolation=cv2.INTER_NEAREST)
         
         msk_3c = np.array(msk)[...,None].repeat(3, axis=2)
                     
@@ -315,20 +337,13 @@ class Dataset(BaseDataset):
         H_nerf, W_nerf = int(img.shape[0] * self.opt.nerf_ratio), int(img.shape[1] * self.opt.nerf_ratio)
         
         img = img * msk_3c
-        
-        if self.opt.not_blur_nerf:
-            img_nerf = cv2.resize(img, (W_nerf, H_nerf))#
-            msk_nerf = cv2.resize(msk, (W_nerf, H_nerf))
-        else:
-            img = cv2.GaussianBlur(img,(9,9),cv2.BORDER_DEFAULT)            
-            img_nerf = cv2.resize(img, (W_nerf, H_nerf))#, interpolation=cv2.INTER_AREA                
-            msk_nerf = (img_nerf != 0)[...,0]
-        
-        
-                    
+        img_nerf = cv2.resize(img, (W_nerf, H_nerf))#, interpolation=cv2.INTER_AREA
+        msk_nerf = cv2.resize(msk, (W_nerf, H_nerf))
+
         Cam_K_nerf = K.copy().astype(np.float32)
         Cam_K_nerf[:2] = Cam_K_nerf[:2] * self.opt.nerf_ratio
-        
+
+
         _meta = {                
             'img_gen': img_gen * 2 - 1.0,
             'mask_gen': msk_gen,
@@ -338,26 +353,23 @@ class Dataset(BaseDataset):
             'Cam_K_nerf': Cam_K_nerf
         }
         ret.update(_meta)
-        
+            
         index = frame_index
         feature, coord, out_sh, can_bounds, bounds, Rh, Th, center, rot, trans, betas, poses = self.prepare_input(
             i)
-
+        
         if self.data_flag == "train":
-            assert  len(self.ims) % len(self.view_id) == 0            
+            assert  len(self.ims) % len(self.view_id) == 0
             frame_each_cam = int(len(self.ims) / len(self.view_id))
             time_lat_index = frame_index % frame_each_cam + 1
         else:
             time_lat_index = 0
 
-        img_name = img_path.split('/')
+        img_name = img_path.split('/')        
         img_name = "%s_%s" % (img_name[-2], img_name[-1])
 
-  
         R = cv2.Rodrigues(Rh)[0].astype(np.float32)
         i = index // self.num_cams
- 
-   
         
         ret.update({
             "can_bounds": can_bounds,
@@ -372,13 +384,16 @@ class Dataset(BaseDataset):
             'cam_ind': cam_ind,
             "phase": self.data_flag,
             "time_lat_index" : time_lat_index,
-            "rgbd5_full_pose" : 0,
-
-            "lr_depth": self.meta_dict["lr_depth"][frame_index][cam_ind],
-            "full_uv": self.meta_dict["full_uv"][frame_index][cam_ind],
-            "normal_3d": self.meta_dict["normal_3d"][frame_index]
+            "rgbd5_full_pose" : 0
         })
-        
+
+        if self.opt.load_tmp_rendering:
+            idx_cam = "%s_%s" % (index, cam_ind)
+            ret.update({                
+                "posed_uv": self.tmprendering["posed_uv"][idx_cam], 
+                "lr_depth": self.tmprendering["lr_depth"][idx_cam]
+            })
+            
         meta = {
             'bounds': bounds,
             'R': R,
@@ -391,9 +406,9 @@ class Dataset(BaseDataset):
             'Cam_R': Cam_R,
             'Cam_T': Cam_T,
             'smpl_trans': Th,
-            'dataset_id': self.dataset_id
-            
+            'dataset_id': self.dataset_id            
         }
+        
 
         ret.update(meta)
         return ret
@@ -405,17 +420,6 @@ class Dataset(BaseDataset):
         else: 
             return None
 
-    def arah_get_mask(self, mask_in):
-        mask = (mask_in != 0).astype(np.uint8)
-
-        border = 5
-        kernel = np.ones((border, border), np.uint8)
-        mask_erode = cv2.erode(mask.copy(), kernel)
-        mask_dilate = cv2.dilate(mask.copy(), kernel)
-        mask[(mask_dilate - mask_erode) == 1] = 100
-
-        return mask
-    
     def __getitem__(self, index):
         ret = self.get_item_packed(index)
         current_smpl_pts = ret["feature"][:,:3,...]
@@ -443,21 +447,75 @@ class Dataset(BaseDataset):
             next_smpl_pts = self.get_smpl_vts(frame_index + velocity)
             zero_motion = 0 * current_smpl_pts
 
+            if self.opt.posenet_setup.ab_c_v10:
+                motion_seq = []
+                zero_motion = 0 * current_smpl_pts
+                t_pre_vts = None
+                t_cur_vts = current_smpl_pts
+                for i in range(1, 11, 1):
+                    t_pre_vts = self.get_smpl_vts(frame_index - f_b * i * velocity)
+                    motion_seq.append(t_cur_vts - t_pre_vts if t_pre_vts is not None else zero_motion)
+                    t_cur_vts = t_pre_vts
+
+                if next_smpl_pts is None:
+                    next_pose = zero_motion
+                    next_vel = zero_motion
+                else:
+                    next_pose = next_smpl_pts
+                    next_vel = next_pose - current_smpl_pts
+
+                ret["feature"] = np.concatenate([current_smpl_pts] + motion_seq + [next_pose, next_vel] + [current_smpl_pts_global], 1)
+                return ret
+
             if self.opt.posenet_setup.c_velo:
+
                 motion_seq = []
                 for i in range(1, self.opt.posenet_setup.size_motion_window, 1):                    
                     motion_seq.append(self.get_smpl_vts(frame_index - f_b * i * velocity))
 
                 if self.opt.posenet_setup.new_dynamics:
-                    ret["feature"] = np.concatenate([current_smpl_pts] + [next_smpl_pts if next_smpl_pts is not None else zero_motion] + [m if m is not None else zero_motion for m in motion_seq]   + [ret["normal_3d"]] + [current_smpl_pts_global], 1)
+                    ret["feature"] = np.concatenate([current_smpl_pts] + [next_smpl_pts if next_smpl_pts is not None else zero_motion] + [m if m is not None else zero_motion for m in motion_seq]   + [current_smpl_pts_global], 1)
                     return ret
+
+                pre_vts_1 = motion_seq[0]
+                pre_vts_2 = motion_seq[1]
+
+                cur_vel = zero_motion if pre_vts_1 is None else current_smpl_pts - pre_vts_1
+                cur_acc = zero_motion if (pre_vts_2 is None or pre_vts_1 is None) else current_smpl_pts + pre_vts_2 - 2 * pre_vts_1
+
+                if next_smpl_pts is None:
+                    next_pose = zero_motion
+                    next_vel = zero_motion
+                else:
+                    next_pose = next_smpl_pts
+                    next_vel = next_pose - current_smpl_pts
                 
+                if self.opt.posenet_setup.c_traj:
+                    traj_vts = None
+                    cnt = 0
+                    for i, vts in enumerate(motion_seq):
+                        
+                        if vts is None: break
+
+                        vts = vts * (self.opt.posenet_setup.size_motion_window - i) * velocity
+                        cnt = cnt + (self.opt.posenet_setup.size_motion_window - i) * velocity
+                        traj_vts = traj_vts + vts if traj_vts is not None else vts
+                    if cnt: traj_vts /= cnt
+                    else: traj_vts = 0 * current_smpl_pts
+
+                    if self.data_flag == "test":
+                        cur_vel /= self.opt.motion.infer_velocity
+                        cur_acc /= self.opt.motion.infer_velocity
+
+                    ret["feature"] = np.concatenate([current_smpl_pts, cur_vel, cur_acc, traj_vts, next_pose, next_vel, current_smpl_pts_global], 1)
+                else:
+                    dynamics = [cur_vel]
+                    if self.opt.posenet_setup.c_acce: dynamics += [cur_acc]
+                    ret["feature"] = np.concatenate([current_smpl_pts] + dynamics + [next_pose, next_vel, current_smpl_pts_global], 1)
+            else:
+                ret["feature"] = np.concatenate([current_smpl_pts, zero_motion, zero_motion, zero_motion, zero_motion, zero_motion, current_smpl_pts_global], 1)
+
         return ret
-        
-    def load_meta_data(self, data_root, split):
-        meta_file = os.path.join(data_root, "meta.pkl")        
-        with open(meta_file, 'rb') as f:
-            self.meta_dict = pickle.load(f)
 
     def __len__(self):        
         return len(self.ims)
